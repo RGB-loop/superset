@@ -13,6 +13,12 @@ import { lt, prerelease } from "semver";
 
 const REFETCH_INTERVAL_MS = 30 * 60 * 1000;
 
+// This pinned 1.19 build must not contact the server's desktop-version gate.
+// The endpoint can publish blocking minimum-version notices independently of
+// Electron's updater, which would otherwise replace the app with an update
+// required screen even when the updater itself is disabled.
+const DISABLE_SERVER_VERSION_GATE = true;
+
 /** Synthesized from the legacy `minimumVersion` field so old constant bumps
  * flow through the same notice surface. */
 const MINIMUM_VERSION_NOTICE_ID = "minimum-version";
@@ -56,6 +62,7 @@ export function useDesktopNotices(): UseDesktopNoticesResult {
 
 	// Fails open: any fetch/parse error just means no notices this cycle.
 	const { data } = useQuery({
+		enabled: !DISABLE_SERVER_VERSION_GATE,
 		queryKey: ["desktop-notices"],
 		queryFn: async () => {
 			const response = await fetch(
