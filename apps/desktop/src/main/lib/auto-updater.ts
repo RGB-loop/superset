@@ -50,6 +50,11 @@ function isPrereleaseBuild(): boolean {
 const IS_PRERELEASE = isPrereleaseBuild();
 const IS_AUTO_UPDATE_PLATFORM = PLATFORM.IS_MAC || PLATFORM.IS_LINUX;
 
+// This build is intentionally pinned to 1.19.0. Keep the updater module in
+// place so the existing IPC surface remains stable, but make every update
+// entry point a no-op (including the manual "Check for Updates" action).
+const AUTO_UPDATE_DISABLED = true;
+
 // Use explicit feed URLs to ensure we always fetch platform-specific manifests
 // (for example latest-mac.yml and latest-linux.yml) from the correct release.
 // - Stable: fetches from /releases/latest/download/ (latest non-prerelease)
@@ -125,6 +130,9 @@ export function isUpdateReadyToInstall(): boolean {
 }
 
 export function installUpdate(): void {
+	if (AUTO_UPDATE_DISABLED) {
+		return;
+	}
 	if (env.NODE_ENV === "development") {
 		// Simulate the real lifecycle so the renderer can be previewed with the
 		// simulate* mutations: installing lingers, then the post-update
@@ -165,7 +173,11 @@ export function dismissUpdate(): void {
 }
 
 export function checkForUpdates(): void {
-	if (env.NODE_ENV === "development" || !IS_AUTO_UPDATE_PLATFORM) {
+	if (
+		AUTO_UPDATE_DISABLED ||
+		env.NODE_ENV === "development" ||
+		!IS_AUTO_UPDATE_PLATFORM
+	) {
 		return;
 	}
 	isDismissed = false;
@@ -182,6 +194,9 @@ export function checkForUpdates(): void {
 }
 
 export function checkForUpdatesInteractive(): void {
+	if (AUTO_UPDATE_DISABLED) {
+		return;
+	}
 	if (env.NODE_ENV === "development") {
 		dialog.showMessageBox({
 			type: "info",
@@ -293,7 +308,11 @@ export function simulateError(): void {
 }
 
 export function setupAutoUpdater(): void {
-	if (env.NODE_ENV === "development" || !IS_AUTO_UPDATE_PLATFORM) {
+	if (
+		AUTO_UPDATE_DISABLED ||
+		env.NODE_ENV === "development" ||
+		!IS_AUTO_UPDATE_PLATFORM
+	) {
 		return;
 	}
 
