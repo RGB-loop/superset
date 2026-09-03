@@ -79,7 +79,10 @@ export function useDesktopNotices(): UseDesktopNoticesResult {
 	});
 
 	const applicable = useMemo(() => {
-		if (!data) return [];
+		// Ignore both fresh and previously persisted server data in the pinned
+		// build. `enabled: false` prevents new requests, while this guard also
+		// prevents an old cached blocking notice from replacing the app.
+		if (DISABLE_SERVER_VERSION_GATE || !data) return [];
 		const appVersion = window.App.appVersion;
 
 		const notices: DesktopNotice[] = [...data.notices];

@@ -3,7 +3,6 @@ import { app, BrowserWindow, Menu, shell } from "electron";
 import { env } from "main/env.main";
 import { resetTerminalStateDev } from "main/lib/terminal/dev-reset";
 import {
-	checkForUpdatesInteractive,
 	simulateDownloading,
 	simulateError,
 	simulateUpdateReady,
@@ -184,12 +183,6 @@ export function createApplicationMenu() {
 					accelerator: openSettingsAccelerator,
 					click: () => {
 						menuEmitter.emit("open-settings");
-					},
-				},
-				{
-					label: "Check for Updates...",
-					click: () => {
-						checkForUpdatesInteractive();
 					},
 				},
 				{ type: "separator" },
