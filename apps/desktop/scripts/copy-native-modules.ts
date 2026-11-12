@@ -22,7 +22,9 @@ import {
 	readdirSync,
 	readFileSync,
 	realpathSync,
+	rmdirSync,
 	rmSync,
+	unlinkSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { satisfies } from "semver";
@@ -64,6 +66,26 @@ function findBunStoreFolderName(
 	return entries.find((entry) => entry.startsWith(modulePrefix)) ?? null;
 }
 
+/**
+ * Removes a symlink/junction without touching what it points at.
+ *
+ * Bun links workspace deps as directory junctions on Windows, where `rmSync`
+ * fails with EFAULT and a recursive rm would delete through the link into the
+ * Bun store. `rmdirSync` maps to RemoveDirectoryW, which unlinks the junction
+ * and leaves its target intact.
+ */
+function removeSymlink(linkPath: string): void {
+	if (process.platform === "win32") {
+		if (lstatSync(linkPath).isDirectory()) {
+			rmdirSync(linkPath);
+		} else {
+			unlinkSync(linkPath);
+		}
+		return;
+	}
+	rmSync(linkPath);
+}
+
 function copyModuleIfSymlink(
 	nodeModulesDir: string,
 	moduleName: string,
@@ -98,7 +120,7 @@ function copyModuleIfSymlink(
 		console.log(`    Real path: ${realPath}`);
 
 		// Remove the symlink
-		rmSync(modulePath);
+		removeSymlink(modulePath);
 
 		// Copy the actual files
 		cpSync(realPath, modulePath, { recursive: true });
@@ -203,7 +225,7 @@ function copyDependencyForPackage(
 		const nestedStats = lstatSync(nestedDependencyPath);
 		if (nestedStats.isSymbolicLink()) {
 			const realPath = realpathSync(nestedDependencyPath);
-			rmSync(nestedDependencyPath);
+			removeSymlink(nestedDependencyPath);
 			cpSync(realPath, nestedDependencyPath, {
 				recursive: true,
 			});
