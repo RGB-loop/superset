@@ -20,6 +20,10 @@ jobs:
       TARGET_ARCH: x64
       # Unsigned build: no Windows code-signing cert is available here.
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      # native-keymap 3.3.9 still calls v8::Object::GetAlignedPointerFromInternalField,
+      # which Electron 40's headers deprecate; MSVC raises it as error C4996 and the
+      # rebuild dies. cl.exe reads $CL for extra flags, so silence just that warning.
+      CL: /wd4996
 
     steps:
       # Renderer component folders nest deep enough to blow past Windows MAX_PATH
