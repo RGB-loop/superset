@@ -21,9 +21,11 @@ jobs:
       # Unsigned build: no Windows code-signing cert is available here.
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
       # native-keymap 3.3.9 still calls v8::Object::GetAlignedPointerFromInternalField,
-      # which Electron 40's headers deprecate; MSVC raises it as error C4996 and the
-      # rebuild dies. cl.exe reads $CL for extra flags, so silence just that warning.
-      CL: /wd4996
+      # which Electron 40's headers deprecate. Its binding.gyp passes /sdl to cl, which
+      # promotes C4996 to an error, so the rebuild dies. _CL_ options are appended after
+      # the command line (CL would be prepended and lose to /sdl); the binding.gyp patch
+      # below appends /wd4996 for the same reason.
+      _CL_: /wd4996
 
     steps:
       # Renderer component folders nest deep enough to blow past Windows MAX_PATH
@@ -62,6 +64,27 @@ jobs:
       # Rebuilds better-sqlite3 / node-pty / native-keymap against Electron's
       # ABI with MSVC. node-pty's binding.gyp asks for Spectre-mitigated libs
       # (MSB8040 if the runner image lacks them).
+      - name: Patch native-keymap compiler flags
+        shell: pwsh
+        run: |
+          $gyp = @(
+            Get-ChildItem -Path "$env:GITHUB_WORKSPACE\node_modules\.bun\native-keymap*\node_modules\native-keymap\binding.gyp" -ErrorAction SilentlyContinue
+            Get-ChildItem -Path "$env:GITHUB_WORKSPACE\apps\desktop\node_modules\native-keymap\binding.gyp" -ErrorAction SilentlyContinue
+          ) | Select-Object -First 1
+
+          if (-not $gyp) {
+            Write-Error "native-keymap binding.gyp not found — cannot disable C4996"
+            exit 1
+          }
+
+          $patched = (Get-Content $gyp.FullName -Raw) -replace "'/W3'", "'/W3',`r`n            '/wd4996'"
+          if ($patched -notmatch '/wd4996') {
+            Write-Error "Failed to append /wd4996 to $($gyp.FullName)"
+            exit 1
+          }
+          Set-Content -Path $gyp.FullName -Value $patched -NoNewline
+          Write-Host "Patched $($gyp.FullName)"
+
       - name: Install desktop native dependencies
         working-directory: apps/desktop
         run: bun run install:deps
