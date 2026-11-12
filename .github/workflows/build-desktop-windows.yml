@@ -1,0 +1,158 @@
+name: Build Desktop App (Windows x64)
+
+# Standalone, opt-in Windows build. Not wired into release-desktop.yml so the
+# existing macOS/Linux release path is untouched.
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build - Windows (x64)
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    env:
+      TARGET_PLATFORM: win32
+      TARGET_ARCH: x64
+      # Unsigned build: no Windows code-signing cert is available here.
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup Bun
+        id: setup-bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .bun-version
+
+      - name: Cache dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ steps.setup-bun.outputs.bun-revision }}-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-bun-${{ steps.setup-bun.outputs.bun-revision }}-
+
+      - name: Install dependencies
+        run: bun install --frozen --ignore-scripts
+
+      # Rebuilds better-sqlite3 / node-pty / native-keymap against Electron's
+      # ABI with MSVC. node-pty's binding.gyp asks for Spectre-mitigated libs
+      # (MSB8040 if the runner image lacks them).
+      - name: Install desktop native dependencies
+        working-directory: apps/desktop
+        run: bun run install:deps
+
+      - name: Clean dev folder
+        working-directory: apps/desktop
+        run: bun run clean:dev
+
+      - name: Generate file icons
+        working-directory: apps/desktop
+        run: bun run generate:icons
+
+      # Renderer bakes host process.platform via define/injectProcessEnvPlugin,
+      # so this must run natively on Windows.
+      - name: Compile app with electron-vite
+        working-directory: apps/desktop
+        run: bun run compile:app
+
+      - name: Package Windows installer
+        working-directory: apps/desktop
+        run: bun run package -- --publish never --config electron-builder.ts --win --x64
+
+      - name: Verify installer + updater manifest
+        shell: pwsh
+        working-directory: apps/desktop
+        run: |
+          $ErrorActionPreference = "Stop"
+          Get-ChildItem release | Format-Table Name, Length
+
+          $installer = Get-ChildItem release -Filter *.exe -File | Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "No NSIS installer (.exe) produced in apps/desktop/release"
+            exit 1
+          }
+          Write-Host "OK: installer $($installer.Name) ($([math]::Round($installer.Length / 1MB, 1)) MB)"
+
+          if (-not (Test-Path release/latest.yml)) {
+            Write-Error "latest.yml missing — electron-updater would be broken"
+            exit 1
+          }
+          Write-Host "OK: latest.yml present"
+
+          if (-not (Test-Path release/win-unpacked/Superset.exe)) {
+            Write-Error "win-unpacked/Superset.exe missing"
+            exit 1
+          }
+          Write-Host "OK: win-unpacked app present"
+
+      - name: Verify bundled CLI + native bindings
+        shell: pwsh
+        working-directory: apps/desktop
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $cli = "release/win-unpacked/resources/resources/bin/superset.exe"
+          if (-not (Test-Path $cli)) {
+            Write-Error "Bundled Superset CLI missing at $cli"
+            exit 1
+          }
+          & $cli --version
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Bundled CLI failed to execute (exit $LASTEXITCODE)"
+            exit 1
+          }
+          Write-Host "OK: bundled CLI runs"
+
+          $unpacked = "release/win-unpacked/resources/app.asar.unpacked/node_modules"
+
+          $sqlite = Get-ChildItem "$unpacked/better-sqlite3" -Recurse -Filter *.node -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $sqlite) {
+            Write-Error "better-sqlite3 native binding missing from app.asar.unpacked — app will crash on launch"
+            exit 1
+          }
+          Write-Host "OK: better-sqlite3 -> $($sqlite.FullName)"
+
+          $duckdb = "$unpacked/@duckdb/node-bindings-win32-x64/duckdb.node"
+          if (-not (Test-Path $duckdb)) {
+            Write-Error "DuckDB win32-x64 binding missing at $duckdb — mastra/duckdb paths will crash"
+            exit 1
+          }
+          Write-Host "OK: duckdb -> $duckdb"
+
+          # Terminals are known-broken on Windows (pty-daemon uses Unix sockets),
+          # so a missing node-pty binding is reported but not fatal.
+          $pty = Get-ChildItem "$unpacked/node-pty" -Recurse -Filter *.node -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($pty) {
+            Write-Host "OK: node-pty -> $($pty.FullName)"
+          } else {
+            Write-Host "::warning::node-pty native binding not found in app.asar.unpacked"
+          }
+
+      - name: Upload NSIS installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-win-x64-nsis
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.blockmap
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload auto-update manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: desktop-win-x64-update-manifest
+          path: apps/desktop/release/*.yml
+          if-no-files-found: error
+          retention-days: 30
